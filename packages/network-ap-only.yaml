@@ -1,0 +1,19 @@
+# Network: the device's own access point only - for a sauna with no Wi-Fi.
+#
+# Needs: ap_ssid, ap_password.
+#
+# Join the access point and open http://192.168.4.1. sauna_wifi is still
+# included because proxy.yaml's Network and history-link sensors use it; with
+# no network configured it only reports "Own access point".
+
+wifi:
+  # A station that never associates would otherwise reboot the device.
+  reboot_timeout: 0s
+  # The ESP is the AP; parking its radio between beacons hurts every client.
+  power_save_mode: NONE
+  ap:
+    ssid: ${ap_ssid}
+    password: ${ap_password}
+
+sauna_wifi:
+  id: sauna_wifi_id

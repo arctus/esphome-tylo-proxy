@@ -1,0 +1,6 @@
+# ESPHome build output and local secrets
+.esphome/
+example/secrets.yaml
+example/tylo-sauna-ap.yaml
+__pycache__/
+*.pyc

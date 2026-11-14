@@ -1,0 +1,901 @@
+# esphome-tylo-proxy - the sauna controller package.
+#
+#   heater ==bus A== RS485 module #1 == [ESP32] == RS485 module #2 ==bus B== panel
+#
+# Include it together with ONE network package (network-fallback.yaml or
+# network-ap-only.yaml) and the external components - see example/ and the
+# README. The device file sets: device_name, friendly_name, ap_ssid,
+# ap_password, api_encryption_key (and wifi_ssid / wifi_password for
+# network-fallback.yaml). Every substitution below can be overridden there.
+#
+# How it behaves (proxy, rules, statistics, clock): docs/behaviour.md.
+# Wiring, checks and the manual fallback: docs/wiring.md.
+# Protocol findings and what differs from upstream: docs/protocol.md.
+#
+# Upstream's packages/base.yaml (f-io/esphome-tylo) is NOT used: this file
+# declares logger, api, ota, uart, sauna360 and every entity itself, under its
+# own names and in web UI sections.
+#
+# ICONS are not stored on the device: the web page fetches each one from
+# api.iconify.design the first time and the phone keeps it for 7 days. On the
+# device's own access point (no internet) an icon only shows if the phone has
+# seen it before - open the page once with mobile data on.
+#
+# WEB UI (http://192.168.4.1 on its own AP, its DHCP address on a network),
+# in sections:
+#   Heater         what the heater reports, and its direct controls (light,
+#                  heater, temperature level, bath time)
+#   Session        the running session: state, time left, cooldown
+#   Configuration  the usage rules and device settings
+#   Statistics     totals, average and median, recent sessions
+#   Diagnostics    network, RS485 proxy health, versions, uptime
+# Full history and the phone clock sync: <same address>/sauna
+#
+# BUS MODE (Configuration section, remembered across reboots)
+#   Listen             panel wired STRAIGHT to the heater, ESP on bus A only.
+#                      Never transmits on either bus.
+#   Forward            panel wired to bus B. Every frame is forwarded; if the
+#                      panel does not answer within panel_reply_timeout the ESP
+#                      answers the heater for it. Web UI commands are dropped.
+#   Forward + Control  as Forward, plus web UI commands go to the heater in
+#                      place of the panel's keep-alive reply. The default.
+#
+# USAGE RULES (components/sauna360/sauna_policy.cpp), Forward + Control only:
+#   Sauna Allowed            off: panel heater starts refused at the proxy;
+#                            a heater on anyway is switched off after 10 s
+#   Temperature Limit        written into the heater's own max bath
+#                            temperature; a higher target is set back
+#   Session Time Limit       counts from "within 10 C of target" (or after a
+#                            60 min warm-up); stops the heater at the limit.
+#                            The heater's own bath time is held at 60 min +
+#                            the limit as the backstop if this ESP dies.
+#   Restart Cooldown         refuses starts for N min after a limit stop
+#   Blink Light Before Stop  two blinks 5 min before a limit stop
+#   Opening Hours            with Opening Time / Closing Time: outside them a
+#                            start is refused, but a session that began while
+#                            the sauna was open runs to its end. Needs the
+#                            clock (sync it on /sauna); with no clock nothing
+#                            is enforced.
+#   Relax Today              skips the opening hours until midnight, then
+#                            clears itself. It survives a reboot on the same
+#                            day.
+#
+# STATISTICS (sauna_stats.cpp): every heater session of a minute or more,
+# saved to flash once per completed session. HISTORY + CLOCK (sauna_clock.cpp):
+# /sauna lists the kept sessions and writes the phone's time into the
+# heater's own clock, which stamps every session.
+
+substitutions:
+  # Defaults; a device file may override any of these.
+  config_version: "1.0.0"
+  model_name: elite
+  log_level: DEBUG
+  heater_tx_pin: GPIO41
+  heater_rx_pin: GPIO42
+  panel_tx_pin: GPIO17
+  panel_rx_pin: GPIO18
+  panel_reply_timeout: 60ms
+  min_temp_c: "40"
+  max_temp_c: "110"
+  heater_max_temperature_c: "110"
+  # One of the Pure panel levels below, spelled exactly as the option.
+  policy_temp_limit: "Level 9 (102 °C)"
+  policy_session_limit: "60 min"
+  policy_cooldown: "5 min"
+  policy_open_time: "07:00:00"
+  policy_close_time: "22:00:00"
+
+esphome:
+  comment: Tylo sauna RS485 proxy (esphome-tylo-proxy)
+  project:
+    name: "arctus.esphome-tylo-proxy"
+    version: ${config_version}
+  on_boot:
+    priority: -100
+    then:
+      # Compiled at DEBUG, run at INFO; the Log Level select raises it.
+      - logger.set_level:
+          level: INFO
+      - lambda: |-
+          ESP_LOGI("sauna", "${friendly_name} %s starting", "${config_version}");
+          ESP_LOGI("sauna", "Wiring: heater bus TX ${heater_tx_pin} / RX ${heater_rx_pin} "
+                            "(RS485 module #1), panel bus TX ${panel_tx_pin} / RX ${panel_rx_pin} "
+                            "(RS485 module #2), module RX->ESP RX, TX->ESP TX");
+          auto *s = id(sauna360_component);
+          auto idx = id(bus_mode).active_index();
+          s->set_bus_mode(idx.has_value() ? (uint8_t) *idx : 0);
+          // Hand the restored settings to the component.
+          s->set_policy_heater_max_temp(${heater_max_temperature_c});
+          s->set_policy_allowed(id(pol_allowed).state);
+          s->set_policy_temp_limit(atoi(strchr(id(pol_temp_limit).current_option().c_str(), '(') + 1));
+          s->set_policy_temp_limit_enabled(id(pol_temp_limit_enabled).state);
+          s->set_policy_session_limit_min(atoi(id(pol_session_limit).current_option().c_str()));
+          s->set_policy_cooldown_min(atoi(id(pol_cooldown).current_option().c_str()));
+          s->set_policy_blink(id(pol_blink).state);
+          s->set_policy_hours_enabled(id(pol_hours).state);
+          s->set_policy_open_minutes(id(pol_open_time).hour * 60 + id(pol_open_time).minute);
+          s->set_policy_close_minutes(id(pol_close_time).hour * 60 + id(pol_close_time).minute);
+
+# Reset reason, heap and loop time for the Diagnostics group.
+debug:
+  update_interval: 60s
+
+logger:
+  level: ${log_level}
+  # No serial logging: logs come through the web UI.
+  baud_rate: 0
+
+# Home Assistant is optional: it may be down, or the sauna may be on its own
+# AP. The default 15 min API timeout would reboot the device in a loop.
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: ${api_encryption_key}
+
+# OTA is encrypted with the API key (a bare `encryption:` inherits it), which
+# also authenticates the uploader - no OTA password in the firmware.
+ota:
+  - platform: esphome
+    encryption:
+
+# Wi-Fi is in the network packages (network-fallback.yaml, network-ap-only.yaml).
+
+# local: true embeds the UI's JavaScript - there is no internet on the AP.
+web_server:
+  port: 80
+  version: 3
+  local: true
+  js_url: ""
+  sorting_groups:
+    - id: grp_heater
+      name: "Heater"
+      sorting_weight: 10
+    - id: grp_session
+      name: "Session"
+      sorting_weight: 20
+    - id: grp_config
+      name: "Configuration"
+      sorting_weight: 30
+    - id: grp_stats
+      name: "Statistics"
+      sorting_weight: 40
+    - id: grp_diag
+      name: "Diagnostics"
+      sorting_weight: 50
+
+uart:
+  - id: heater_bus
+    tx_pin: ${heater_tx_pin}
+    rx_pin: ${heater_rx_pin}
+    baud_rate: 19200
+    data_bits: 8
+    parity: EVEN
+    stop_bits: 1
+  - id: panel_bus
+    tx_pin: ${panel_tx_pin}
+    rx_pin: ${panel_rx_pin}
+    baud_rate: 19200
+    data_bits: 8
+    parity: EVEN
+    stop_bits: 1
+
+sauna360:
+  id: sauna360_component
+  # `elite` by default, even for a Pure: on the Pure heaters this was tested
+  # on, the 0x7180 relay frames live in the low byte (light bit 5, coils bits
+  # 2..0), which only the combi/elite masks decode (0x20 light on, 0x00 off,
+  # 0xA7 heating + light). In proxy mode the model picks nothing else. If the
+  # Light switch reads backwards or never changes, try `pure`.
+  model: ${model_name}
+  uart_id: heater_bus
+  panel_uart_id: panel_bus
+  panel_reply_timeout: ${panel_reply_timeout}
+
+# ============================================================================
+# HEATER - what the heater reports, and its direct controls
+# ============================================================================
+#
+# TEMPERATURE LEVELS. The basic (Pure) panel has no degrees, only levels 1-10,
+# and both temperature settings below offer exactly those:
+#   1 40 C   2 48 C   3 56 C   4 63 C   5 69 C
+#   6 79 C   7 87 C   8 94 C   9 102 C  10 110 C
+# From the Pure manual's own table (110 C program). If your heater or panel
+# uses another table, fix the options below (both selects) - nothing else
+# depends on the numbers.
+switch:
+  - platform: sauna360
+    heater_relay:
+      name: "Heater"
+      id: heater_relay_switch
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 2
+  - platform: sauna360
+    light_relay:
+      name: "Light"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 3
+
+  # --- CONFIG ---
+  - platform: template
+    name: "Sauna Allowed"
+    id: pol_allowed
+    icon: mdi:account-check-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: id(sauna360_component)->set_policy_allowed(true);
+    on_turn_off:
+      - lambda: id(sauna360_component)->set_policy_allowed(false);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 1
+  - platform: template
+    name: "Temperature Limit"
+    id: pol_temp_limit_enabled
+    icon: mdi:thermometer-alert
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: id(sauna360_component)->set_policy_temp_limit_enabled(true);
+    on_turn_off:
+      - lambda: id(sauna360_component)->set_policy_temp_limit_enabled(false);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 2
+  - platform: template
+    name: "Opening Hours"
+    id: pol_hours
+    icon: mdi:calendar-clock
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: id(sauna360_component)->set_policy_hours_enabled(true);
+    on_turn_off:
+      - lambda: id(sauna360_component)->set_policy_hours_enabled(false);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 7
+
+  # Reflects the component, which clears the relax at midnight by itself, so
+  # this is not optimistic and has no restore_mode - the state lives there.
+  - platform: template
+    name: "Relax Today"
+    id: pol_relax
+    icon: mdi:calendar-remove
+    lambda: return id(sauna360_component)->get_relax_today();
+    turn_on_action:
+      - lambda: id(sauna360_component)->set_relax_today(true);
+    turn_off_action:
+      - lambda: id(sauna360_component)->set_relax_today(false);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 10
+
+  - platform: template
+    name: "Blink Light Before Stop"
+    id: pol_blink
+    icon: mdi:lightbulb-alert-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: id(sauna360_component)->set_policy_blink(true);
+    on_turn_off:
+      - lambda: id(sauna360_component)->set_policy_blink(false);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 6
+
+number:
+  # Hidden, and not a control: upstream's sauna360.cpp includes the number
+  # component unconditionally, so a build with no number entity at all does
+  # not compile. The heater's target is set with Temperature Level below.
+  - platform: sauna360
+    bath_temperature:
+      name: "Target Temperature (internal)"
+      id: bath_temperature
+      internal: true
+      mode: box
+      min_value: ${min_temp_c}
+      max_value: ${max_temp_c}
+
+datetime:
+  - platform: template
+    name: "Opening Time"
+    id: pol_open_time
+    type: time
+    icon: mdi:door-open
+    optimistic: true
+    restore_value: true
+    initial_value: ${policy_open_time}
+    on_value:
+      - lambda: |-
+          id(sauna360_component)->set_policy_open_minutes(x.hour * 60 + x.minute);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 8
+  - platform: template
+    name: "Closing Time"
+    id: pol_close_time
+    type: time
+    icon: mdi:door-closed
+    optimistic: true
+    restore_value: true
+    initial_value: ${policy_close_time}
+    on_value:
+      - lambda: |-
+          id(sauna360_component)->set_policy_close_minutes(x.hour * 60 + x.minute);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 9
+
+select:
+  # The heater's target, as a panel level. Shows the level the heater is on
+  # (empty if its target is off the ladder). Above Max Allowed Temperature,
+  # while the Temperature Limit is on, a choice is lowered to the limit.
+  - platform: template
+    name: "Temperature Level"
+    id: heater_temp_level
+    icon: mdi:thermometer-lines
+    options:
+      - "Level 1 (40 °C)"
+      - "Level 2 (48 °C)"
+      - "Level 3 (56 °C)"
+      - "Level 4 (63 °C)"
+      - "Level 5 (69 °C)"
+      - "Level 6 (79 °C)"
+      - "Level 7 (87 °C)"
+      - "Level 8 (94 °C)"
+      - "Level 9 (102 °C)"
+      - "Level 10 (110 °C)"
+    update_interval: 5s
+    lambda: |-
+      static const int LEVEL_C[10] = {40, 48, 56, 63, 69, 79, 87, 94, 102, 110};
+      const int t = id(sauna360_component)->get_heater_target_c();
+      for (int i = 0; i < 10; i++) {
+        if (t >= LEVEL_C[i] - 1 && t <= LEVEL_C[i] + 1)
+          return "Level " + std::to_string(i + 1) + " (" + std::to_string(LEVEL_C[i]) + " °C)";
+      }
+      return {};
+    set_action:
+      - lambda: |-
+          int c = atoi(strchr(x.c_str(), '(') + 1);
+          const int limit = atoi(strchr(id(pol_temp_limit).current_option().c_str(), '(') + 1);
+          if (id(pol_temp_limit_enabled).state && c > limit) {
+            ESP_LOGW("sauna", "%d C is above the %d C limit - using the limit", c, limit);
+            c = limit;
+          }
+          id(sauna360_component)->set_bath_temperature_number((float) c);
+    web_server:
+      sorting_group_id: grp_heater
+      sorting_weight: 1
+
+  # --- CONFIG ---
+  - platform: template
+    name: "Max Allowed Temperature"
+    id: pol_temp_limit
+    icon: mdi:thermometer-chevron-up
+    options:
+      - "Level 1 (40 °C)"
+      - "Level 2 (48 °C)"
+      - "Level 3 (56 °C)"
+      - "Level 4 (63 °C)"
+      - "Level 5 (69 °C)"
+      - "Level 6 (79 °C)"
+      - "Level 7 (87 °C)"
+      - "Level 8 (94 °C)"
+      - "Level 9 (102 °C)"
+      - "Level 10 (110 °C)"
+    initial_option: ${policy_temp_limit}
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(sauna360_component)->set_policy_temp_limit(atoi(strchr(x.c_str(), '(') + 1));
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 3
+
+  # The heater's own bath time, in 30 min steps. Shows the heater's current
+  # value when it is one of the steps. While a Session Time Limit is set
+  # the rules hold it at 60 min + the limit and a choice here is refused (see
+  # the log); set the limit to Off to choose it freely.
+  - platform: template
+    name: "Bath Time"
+    id: heater_bath_time
+    icon: mdi:timer-cog-outline
+    options:
+      - "30 min"
+      - "60 min"
+      - "90 min"
+      - "120 min"
+      - "150 min"
+      - "180 min"
+      - "210 min"
+      - "240 min"
+      - "270 min"
+      - "300 min"
+      - "330 min"
+      - "360 min"
+    update_interval: 5s
+    lambda: |-
+      const int m = id(sauna360_component)->get_heater_bath_time_min();
+      if (m < 30 || m > 360 || m % 30 != 0)
+        return {};
+      return std::to_string(m) + " min";
+    set_action:
+      - lambda: id(sauna360_component)->request_heater_bath_time(atoi(x.c_str()));
+    web_server:
+      sorting_group_id: grp_heater
+      sorting_weight: 4
+
+  # --- CONFIG ---
+  - platform: template
+    name: "Session Time Limit"
+    id: pol_session_limit
+    icon: mdi:timer-lock-outline
+    options:
+      - "Off"
+      - "5 min"
+      - "30 min"
+      - "60 min"
+      - "90 min"
+      - "120 min"
+      - "150 min"
+      - "180 min"
+      - "210 min"
+      - "240 min"
+    initial_option: ${policy_session_limit}
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(sauna360_component)->set_policy_session_limit_min(atoi(x.c_str()));
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 4
+  - platform: template
+    name: "Restart Cooldown"
+    id: pol_cooldown
+    icon: mdi:timer-sand
+    options:
+      - "Off"
+      - "5 min"
+      - "10 min"
+      - "15 min"
+      - "30 min"
+      - "60 min"
+    initial_option: ${policy_cooldown}
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(sauna360_component)->set_policy_cooldown_min(atoi(x.c_str()));
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 5
+  - platform: template
+    name: "Bus Mode"
+    id: bus_mode
+    icon: mdi:transit-connection-variant
+    options:
+      - "Listen"
+      - "Forward"
+      - "Forward + Control"
+    # Only used when nothing is stored yet (first or erased flash).
+    initial_option: "Forward + Control"
+    optimistic: true
+    restore_value: true
+    on_value:
+      - lambda: id(sauna360_component)->set_bus_mode((uint8_t) i);
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 20
+  - platform: logger
+    name: "Log Level"
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 21
+
+button:
+  - platform: template
+    name: "Reset Statistics"
+    icon: mdi:backup-restore
+    on_press:
+      - lambda: id(sauna360_component)->reset_statistics();
+      # Refresh now, or the old figures stay up for a minute.
+      - component.update: stat_sessions
+      - component.update: stat_limit_stops
+      - component.update: stat_total_hours
+      - component.update: stat_last
+      - component.update: stat_average
+      - component.update: stat_median
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 30
+  # Erases every stored setting and the statistics, then reboots with the
+  # compiled defaults. Safe here: the access point is compiled in.
+  - platform: factory_reset
+    name: "Factory Reset"
+    icon: mdi:alert-octagon
+    web_server:
+      sorting_group_id: grp_config
+      sorting_weight: 31
+
+binary_sensor:
+  - platform: sauna360
+    ready_status:
+      name: "Ready"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 20
+
+  # --- Diagnostics ---
+  - platform: template
+    name: "Heater Talking"
+    icon: mdi:radiator
+    lambda: return id(sauna360_component)->is_heater_talking();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 1
+  - platform: template
+    name: "Panel Responding"
+    icon: mdi:gesture-tap-button
+    lambda: return id(sauna360_component)->is_panel_responding();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 2
+
+sensor:
+  - platform: sauna360
+    current_temperature:
+      name: "Current Temperature"
+      id: current_temperature_sensor
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 10
+  - platform: sauna360
+    setting_temperature:
+      name: "Target Temperature"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 11
+  - platform: sauna360
+    max_bath_temperature:
+      name: "Max Temperature"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 12
+  - platform: sauna360
+    remaining_time:
+      name: "Remaining Time"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 13
+  - platform: sauna360
+    setting_bath_time:
+      name: "Bath Time (reported)"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 14
+  - platform: sauna360
+    total_uptime:
+      name: "Operating Time"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 30
+  - platform: sauna360
+    overheating_pcb_limit:
+      name: "PCB Overheat Limit"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 31
+
+  # --- Session ---
+  - platform: template
+    name: "Session Time Left"
+    icon: mdi:timer-outline
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_session_minutes_left();
+    web_server:
+      sorting_group_id: grp_session
+      sorting_weight: 2
+  - platform: template
+    name: "Current Session"
+    icon: mdi:timer-play-outline
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: return id(sauna360_component)->get_current_session_min();
+    web_server:
+      sorting_group_id: grp_session
+      sorting_weight: 3
+  - platform: template
+    name: "Cooldown Left"
+    icon: mdi:timer-sand
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_cooldown_minutes_left();
+    web_server:
+      sorting_group_id: grp_session
+      sorting_weight: 4
+
+  # --- Statistics ---
+  - platform: template
+    name: "Sessions"
+    id: stat_sessions
+    icon: mdi:counter
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_sessions();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 1
+  - platform: template
+    name: "Sessions Stopped by Limit"
+    id: stat_limit_stops
+    icon: mdi:timer-off-outline
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_limit_stops();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 2
+  - platform: template
+    name: "Total Heating Time"
+    id: stat_total_hours
+    icon: mdi:fire
+    unit_of_measurement: h
+    state_class: total_increasing
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_total_hours();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 3
+  - platform: template
+    name: "Last Session"
+    id: stat_last
+    icon: mdi:history
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_last_min();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 4
+  # Average and median over the same window (last 64 sessions). The median
+  # shrugs off the one session somebody forgot to end; the average does not.
+  - platform: template
+    name: "Average Session"
+    id: stat_average
+    icon: mdi:chart-line
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_average_min();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 5
+  - platform: template
+    name: "Median Session"
+    id: stat_median
+    icon: mdi:chart-bell-curve-cumulative
+    unit_of_measurement: min
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return id(sauna360_component)->get_stat_median_min();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 6
+
+  # --- Diagnostics ---
+  - platform: uptime
+    id: esp_uptime_seconds
+    internal: true
+    update_interval: 60s
+  # House-wide diagnostics (see common/*.yaml); inline here so they sit in
+  # this web UI's Diagnostics group. No Wi-Fi client sensors: AP-only.
+  - platform: internal_temperature
+    name: "ESP Temperature"
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 30
+  - platform: debug
+    free:
+      name: "Heap Free"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: grp_diag
+        sorting_weight: 31
+    loop_time:
+      name: "Loop Time"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: grp_diag
+        sorting_weight: 32
+  - platform: template
+    name: "Heater Frame Rate"
+    icon: mdi:swap-horizontal
+    unit_of_measurement: frames/s
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(sauna360_component)->get_heater_frames_per_s();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 3
+  - platform: template
+    name: "Panel Frame Rate"
+    icon: mdi:swap-horizontal
+    unit_of_measurement: frames/s
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(sauna360_component)->get_panel_frames_per_s();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 4
+  - platform: template
+    name: "Panel Reply Latency"
+    icon: mdi:timer-outline
+    unit_of_measurement: ms
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: return id(sauna360_component)->get_reply_latency_ms();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 5
+  - platform: template
+    name: "Panel Replies Missed"
+    icon: mdi:alert-circle-outline
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_panel_replies_missed();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 6
+  - platform: template
+    name: "Panel Replies Late"
+    icon: mdi:timer-alert-outline
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_panel_replies_late();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 7
+  - platform: template
+    name: "Panel Commands"
+    icon: mdi:gesture-tap
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_panel_commands();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 8
+  - platform: template
+    name: "Commands Sent"
+    icon: mdi:send
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_commands_sent();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 9
+  - platform: template
+    name: "Commands Dropped"
+    icon: mdi:send-lock
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: return id(sauna360_component)->get_commands_dropped();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 10
+
+text_sensor:
+  - platform: sauna360
+    heat_waves:
+      name: "Heating Element"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 21
+  # Door and start-blocking messages from the heater's 0xB000 frames, e.g.
+  # "Door opened too long, bath cancelled". The door sensor and external
+  # switch are wired to the heater, so this is the only view of them.
+  - platform: sauna360
+    heater_state:
+      name: "Heater Message"
+      web_server:
+        sorting_group_id: grp_heater
+        sorting_weight: 22
+  - platform: template
+    name: "Heater Clock"
+    icon: mdi:clock-outline
+    update_interval: 30s
+    lambda: return id(sauna360_component)->get_clock_text();
+    web_server:
+      sorting_group_id: grp_heater
+      sorting_weight: 23
+
+  # --- Session ---
+  - platform: template
+    name: "Opening Hours"
+    icon: mdi:calendar-clock
+    update_interval: 30s
+    lambda: return id(sauna360_component)->get_opening_hours_state();
+    web_server:
+      sorting_group_id: grp_session
+      sorting_weight: 0
+
+  - platform: template
+    name: "Session State"
+    icon: mdi:state-machine
+    update_interval: 2s
+    lambda: return id(sauna360_component)->get_session_state();
+    web_server:
+      sorting_group_id: grp_session
+      sorting_weight: 1
+
+  # --- Statistics ---
+  - platform: template
+    name: "Recent Sessions"
+    icon: mdi:history
+    update_interval: 30s
+    lambda: return id(sauna360_component)->get_recent_sessions_text();
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 10
+  - platform: template
+    name: "Full History and Clock Sync"
+    icon: mdi:link-variant
+    update_interval: 30s
+    lambda: return id(sauna_wifi_id).page_url("/sauna");
+    web_server:
+      sorting_group_id: grp_stats
+      sorting_weight: 11
+
+  # --- Diagnostics ---
+  - platform: template
+    name: "Network"
+    icon: mdi:wifi
+    update_interval: 10s
+    lambda: return id(sauna_wifi_id).status_text();
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 19
+  - platform: template
+    name: "Uptime"
+    icon: mdi:clock-start
+    update_interval: 60s
+    lambda: |-
+      const uint32_t s = (uint32_t) id(esp_uptime_seconds).state;
+      char buf[32];
+      snprintf(buf, sizeof(buf), "%ud %uh %um", (unsigned) (s / 86400),
+               (unsigned) ((s / 3600) % 24), (unsigned) ((s / 60) % 60));
+      return {buf};
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 20
+  - platform: template
+    name: "Config Version"
+    icon: mdi:tag-outline
+    update_interval: 3600s
+    lambda: return {"${config_version}"};
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 21
+  - platform: version
+    name: "ESPHome Version"
+    hide_timestamp: true
+    web_server:
+      sorting_group_id: grp_diag
+      sorting_weight: 22
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: grp_diag
+        sorting_weight: 23

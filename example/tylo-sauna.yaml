@@ -1,0 +1,48 @@
+# Example device: an ESP32-S3 devkit between a Tylo heater and its panel,
+# joining Wi-Fi when it can and running its own access point when it cannot.
+#
+# This file builds from the repo checkout (CI compiles it). For your own
+# device, use the GitHub sources shown in the README instead of the local
+# paths below. Copy secrets.yaml.example to secrets.yaml first.
+
+substitutions:
+  device_name: tylo-sauna
+  friendly_name: Sauna
+  # The access point visitors join when there is no network, and its password.
+  ap_ssid: "Sauna"
+  ap_password: !secret sauna_ap_password
+  wifi_ssid: !secret wifi_ssid
+  wifi_password: !secret wifi_password
+  # Also encrypts OTA updates. Generate one: https://esphome.io/components/api/
+  api_encryption_key: !secret sauna_api_key
+
+  # Optional overrides (defaults in packages/proxy.yaml):
+  # heater_tx_pin: GPIO41
+  # heater_rx_pin: GPIO42
+  # panel_tx_pin: GPIO17
+  # panel_rx_pin: GPIO18
+  # policy_temp_limit: "Level 9 (102 °C)"
+  # policy_session_limit: "60 min"
+  # policy_open_time: "07:00:00"
+  # policy_close_time: "22:00:00"
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 8MB
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+    components: [sauna360, sauna_wifi]
+
+packages:
+  proxy: !include ../packages/proxy.yaml
+  # Or ../packages/network-ap-only.yaml for a sauna with no Wi-Fi.
+  network: !include ../packages/network-fallback.yaml

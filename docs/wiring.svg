@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 640" width="960" height="640" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="13">
+  <title>esphome-tylo-proxy wiring: heater, two RS485 modules, ESP32-S3, panel, buck converter</title>
+  <rect x="0" y="0" width="960" height="640" fill="#ffffff"/>
+
+  <text x="480" y="30" text-anchor="middle" font-size="18" font-weight="600" fill="#222">Heater - ESP32-S3 - panel (RS485 proxy)</text>
+
+  <!-- ===== Wires (drawn first, boxes on top) ===== -->
+  <g fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Heater bus A/B to module #1 -->
+    <line x1="170" y1="100" x2="230" y2="100" stroke="#2e9e44"/>
+    <line x1="170" y1="140" x2="230" y2="140" stroke="#1b7a8c"/>
+    <!-- Module #1 to ESP -->
+    <line x1="360" y1="100" x2="400" y2="100" stroke="#2a6fdb"/>
+    <line x1="360" y1="130" x2="400" y2="130" stroke="#2a6fdb" stroke-dasharray="6 4"/>
+    <line x1="360" y1="160" x2="400" y2="160" stroke="#8a3ffc"/>
+    <line x1="360" y1="190" x2="400" y2="190" stroke="#222"/>
+    <!-- ESP to module #2 -->
+    <line x1="560" y1="100" x2="600" y2="100" stroke="#2a6fdb"/>
+    <line x1="560" y1="130" x2="600" y2="130" stroke="#2a6fdb" stroke-dasharray="6 4"/>
+    <line x1="560" y1="160" x2="600" y2="160" stroke="#8a3ffc"/>
+    <line x1="560" y1="190" x2="600" y2="190" stroke="#222"/>
+    <!-- Module #2 to panel bus A/B -->
+    <line x1="730" y1="100" x2="790" y2="100" stroke="#2e9e44"/>
+    <line x1="730" y1="140" x2="790" y2="140" stroke="#1b7a8c"/>
+    <!-- +12 V: heater pin 3 to buck IN+ and straight on to panel pin 3 -->
+    <polyline points="170,180 210,180 210,530 760,530 760,180 790,180" stroke="#d62728"/>
+    <line x1="210" y1="420" x2="380" y2="420" stroke="#d62728"/>
+    <!-- GND: heater pin 4 to buck IN-, panel pin 4 -->
+    <polyline points="170,220 190,220 190,560 775,560 775,220 790,220" stroke="#222"/>
+    <line x1="400" y1="480" x2="400" y2="560" stroke="#222"/>
+    <!-- Buck out to ESP 5V / GND -->
+    <line x1="450" y1="400" x2="450" y2="320" stroke="#f28e1c"/>
+    <line x1="510" y1="400" x2="510" y2="320" stroke="#222"/>
+  </g>
+  <!-- Junction dots -->
+  <g fill="#d62728"><circle cx="210" cy="420" r="5"/></g>
+  <g fill="#222"><circle cx="400" cy="560" r="5"/></g>
+
+  <!-- ===== Heater ===== -->
+  <rect x="20" y="60" width="150" height="190" rx="8" fill="#fbeaea" stroke="#b03030" stroke-width="2"/>
+  <text x="95" y="82" text-anchor="middle" font-weight="600">Heater</text>
+  <text x="95" y="98" text-anchor="middle" font-size="11" fill="#555">RJ, 4 pins</text>
+  <g font-size="12" text-anchor="end">
+    <text x="162" y="118">1  A</text>
+    <text x="162" y="158">2  B</text>
+    <text x="162" y="198">3  +12 V</text>
+    <text x="162" y="238">4  GND</text>
+  </g>
+  <g fill="#b03030"><circle cx="170" cy="100" r="4"/><circle cx="170" cy="140" r="4"/><circle cx="170" cy="180" r="4"/><circle cx="170" cy="220" r="4"/></g>
+
+  <!-- ===== RS485 module #1 ===== -->
+  <rect x="230" y="70" width="130" height="150" rx="8" fill="#eef3fb" stroke="#2a6fdb" stroke-width="2"/>
+  <text x="295" y="58" text-anchor="middle" font-weight="600">RS485 module #1</text>
+  <g font-size="12">
+    <text x="238" y="104">A+</text>
+    <text x="238" y="144">B-</text>
+    <text x="238" y="184" fill="#555">SC: GND</text>
+    <text x="352" y="104" text-anchor="end">RX</text>
+    <text x="352" y="134" text-anchor="end">TX</text>
+    <text x="352" y="164" text-anchor="end">VCC</text>
+    <text x="352" y="194" text-anchor="end">GND</text>
+  </g>
+  <text x="295" y="238" text-anchor="middle" font-size="11" fill="#555">HW-519, 3.3 V, auto-direction</text>
+
+  <!-- ===== ESP32-S3 ===== -->
+  <rect x="400" y="60" width="160" height="260" rx="8" fill="#f2f2f2" stroke="#444" stroke-width="2"/>
+  <text x="480" y="84" text-anchor="middle" font-weight="600">ESP32-S3 devkit</text>
+  <g font-size="12">
+    <text x="408" y="104">GPIO42 RX</text>
+    <text x="408" y="134">GPIO41 TX</text>
+    <text x="408" y="164">3V3</text>
+    <text x="408" y="194">GND</text>
+    <text x="552" y="104" text-anchor="end">RX GPIO18</text>
+    <text x="552" y="134" text-anchor="end">TX GPIO17</text>
+    <text x="552" y="164" text-anchor="end">3V3</text>
+    <text x="552" y="194" text-anchor="end">GND</text>
+    <text x="450" y="308" text-anchor="middle">5V</text>
+    <text x="510" y="308" text-anchor="middle">GND</text>
+  </g>
+  <text x="480" y="232" text-anchor="middle" font-size="11" fill="#555">heater bus  |  panel bus</text>
+  <text x="480" y="248" text-anchor="middle" font-size="11" fill="#555">19200 8E1, both</text>
+
+  <!-- ===== RS485 module #2 ===== -->
+  <rect x="600" y="70" width="130" height="150" rx="8" fill="#eef3fb" stroke="#2a6fdb" stroke-width="2"/>
+  <text x="665" y="58" text-anchor="middle" font-weight="600">RS485 module #2</text>
+  <g font-size="12">
+    <text x="608" y="104">RX</text>
+    <text x="608" y="134">TX</text>
+    <text x="608" y="164">VCC</text>
+    <text x="608" y="194">GND</text>
+    <text x="722" y="104" text-anchor="end">A+</text>
+    <text x="722" y="144" text-anchor="end">B-</text>
+    <text x="722" y="184" text-anchor="end" fill="#555">SC: GND</text>
+  </g>
+  <text x="665" y="238" text-anchor="middle" font-size="11" fill="#555">HW-519, 3.3 V, auto-direction</text>
+
+  <!-- ===== Panel ===== -->
+  <rect x="790" y="60" width="150" height="190" rx="8" fill="#fbeaea" stroke="#b03030" stroke-width="2"/>
+  <text x="865" y="82" text-anchor="middle" font-weight="600">Panel</text>
+  <text x="865" y="98" text-anchor="middle" font-size="11" fill="#555">RJ, 4 pins</text>
+  <g font-size="12">
+    <text x="798" y="118">1  A</text>
+    <text x="798" y="158">2  B</text>
+    <text x="798" y="198">3  +12 V</text>
+    <text x="798" y="238">4  GND</text>
+  </g>
+  <g fill="#b03030"><circle cx="790" cy="100" r="4"/><circle cx="790" cy="140" r="4"/><circle cx="790" cy="180" r="4"/><circle cx="790" cy="220" r="4"/></g>
+
+  <!-- ===== Buck converter ===== -->
+  <rect x="380" y="400" width="200" height="80" rx="8" fill="#fff4e5" stroke="#f28e1c" stroke-width="2"/>
+  <text x="480" y="436" text-anchor="middle" font-weight="600">Buck 12 V to 5 V</text>
+  <text x="480" y="454" text-anchor="middle" font-size="11" fill="#555">set to 5.0 V before connecting</text>
+  <g font-size="11">
+    <text x="386" y="416">IN+</text>
+    <text x="386" y="476">IN-</text>
+    <text x="450" y="396" text-anchor="middle">OUT 5V</text>
+    <text x="520" y="396" text-anchor="start">OUT GND</text>
+  </g>
+
+  <!-- Notes on the power runs -->
+  <text x="485" y="524" text-anchor="middle" font-size="12" fill="#d62728">+12 V straight from heater to panel (panel keeps power when the ESP reboots)</text>
+  <text x="485" y="582" text-anchor="middle" font-size="12" fill="#222">common GND: heater, panel, buck, ESP, both modules (GND and SC)</text>
+
+  <!-- ===== Legend ===== -->
+  <g font-size="12" transform="translate(20,600)">
+    <line x1="0" y1="0" x2="26" y2="0" stroke="#2e9e44" stroke-width="3"/><text x="32" y="4">RS485 A</text>
+    <line x1="100" y1="0" x2="126" y2="0" stroke="#1b7a8c" stroke-width="3"/><text x="132" y="4">RS485 B</text>
+    <line x1="200" y1="0" x2="226" y2="0" stroke="#2a6fdb" stroke-width="3"/><text x="232" y="4">module RX to ESP RX</text>
+    <line x1="370" y1="0" x2="396" y2="0" stroke="#2a6fdb" stroke-width="3" stroke-dasharray="6 4"/><text x="402" y="4">module TX to ESP TX</text>
+    <line x1="540" y1="0" x2="566" y2="0" stroke="#8a3ffc" stroke-width="3"/><text x="572" y="4">3.3 V</text>
+    <line x1="620" y1="0" x2="646" y2="0" stroke="#f28e1c" stroke-width="3"/><text x="652" y="4">5 V</text>
+    <line x1="690" y1="0" x2="716" y2="0" stroke="#d62728" stroke-width="3"/><text x="722" y="4">+12 V</text>
+    <line x1="780" y1="0" x2="806" y2="0" stroke="#222" stroke-width="3"/><text x="812" y="4">GND</text>
+  </g>
+  <text x="940" y="630" text-anchor="end" font-size="11" fill="#777">RX to RX and TX to TX: the HW-519 labels its pins from the ESP's side</text>
+</svg>

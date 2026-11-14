@@ -1,0 +1,32 @@
+# Network: join a Wi-Fi network when it is there, run the device's own access
+# point when it is not.
+#
+# Needs: wifi_ssid, wifi_password, ap_ssid, ap_password.
+#
+# Without the network the access point comes up after a minute (ESPHome's
+# ap_timeout). sauna_wifi then looks for the network for `search_time`,
+# pauses the search so phones on the access point are not knocked off by
+# the scans, and looks again every `retry_interval` - waiting while a phone
+# is joined to the AP, but at most `max_defer`. Home Assistant is optional
+# either way (api reboot_timeout is 0 in proxy.yaml).
+#
+# No captive_portal on purpose: it would take over "/", the sauna's own page.
+
+wifi:
+  networks:
+    - ssid: ${wifi_ssid}
+      password: ${wifi_password}
+  # Never reboot for lack of a network - the access point is a normal way to run.
+  reboot_timeout: 0s
+  # The ESP may be the AP; parking its radio between beacons hurts every client.
+  power_save_mode: NONE
+  ap:
+    ssid: ${ap_ssid}
+    password: ${ap_password}
+    ap_timeout: 1min
+
+sauna_wifi:
+  id: sauna_wifi_id
+  search_time: 2min
+  retry_interval: 15min
+  max_defer: 60min
