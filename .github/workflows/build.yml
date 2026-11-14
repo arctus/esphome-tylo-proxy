@@ -50,10 +50,15 @@ jobs:
 
       - name: Collect firmware
         run: |
+          # Only the two images a user flashes: factory (first USB flash) and
+          # OTA. The build folder also holds ESP-IDF's bootloader, partition
+          # table and CMake probe .bin files, which are not for users.
           mkdir -p firmware
-          find example/.esphome/build/tylo-sauna -name '*.bin' \
-            \( -path '*/build/tylo-sauna*.bin' -o -name 'firmware*.bin' \) \
-            -exec cp {} firmware/ \;
+          for f in firmware.factory.bin firmware.ota.bin; do
+            src=$(find example/.esphome/build/tylo-sauna -name "$f" | head -n 1)
+            test -n "$src" || { echo "missing $f"; exit 1; }
+            cp "$src" "firmware/tylo-sauna-${f#firmware.}"
+          done
           ls -la firmware
 
       - uses: actions/upload-artifact@v4
