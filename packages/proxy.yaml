@@ -67,7 +67,7 @@
 
 substitutions:
   # Defaults; a device file may override any of these.
-  config_version: "1.1.0"
+  config_version: "1.1.1"
   model_name: elite
   log_level: DEBUG
   heater_tx_pin: GPIO41

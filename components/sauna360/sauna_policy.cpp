@@ -57,6 +57,9 @@ constexpr int BLINK_STEPS = 4; // off/on/off/on = two blinks, ends as it began
 constexpr uint32_t SETTINGS_RETRY_MS = 15000u;
 constexpr uint32_t SETTINGS_BACKOFF_MS = 300000u;
 constexpr int BATH_TIME_MAX_MIN = 575;
+// How long after boot to wait for the heater's own 0x4002 before writing the
+// rules' values to make it report (see policy_enforce_heater_settings_()).
+constexpr uint32_t SETTINGS_BOOT_WAIT_MS = 60000u;
 } // namespace
 
 void SAUNA360Component::set_policy_temp_limit_enabled(bool v) {
@@ -241,6 +244,41 @@ void SAUNA360Component::policy_enforce_heater_settings_() {
         this->pol_last_4002_ms_ = now;
         attempts_4002++;
       }
+    }
+  } else if (now >= SETTINGS_BOOT_WAIT_MS) {
+    // The heater sends 0x4002 only when it changes, so after a restart of the
+    // ESP alone (an OTA update) it never arrives by itself, and the checks
+    // above never run. Write the values the rules prescribe; the heater
+    // answers with its own 0x4002, which fills have_4002 and the display.
+    // Only values the rules would write anyway: with no session limit the
+    // bath time must come from the last-known settings (sauna_cache.cpp), and
+    // with no temperature limit so must the maximum - otherwise nothing is
+    // written rather than inventing a value.
+    int want_min = -1;
+    if (this->pol_limit_min_ > 0) {
+      want_min = 60 + this->pol_limit_min_;
+      if (want_min > BATH_TIME_MAX_MIN)
+        want_min = BATH_TIME_MAX_MIN;
+    } else if (this->cache_bath_raw_.load() != 0) {
+      want_min = this->decode_bath_time_minutes_(this->cache_bath_raw_.load());
+    }
+    int want_max = -1;
+    if (this->pol_temp_limit_enabled_)
+      want_max = this->pol_temp_limit_c_;
+    else if (this->cache_max_hex_.load() != 0)
+      want_max = (int) std::lround(this->cache_max_hex_.load() / 18.0f);
+
+    const uint32_t wait =
+        attempts_4002 >= 3 ? SETTINGS_BACKOFF_MS : SETTINGS_RETRY_MS;
+    if (want_min > 0 && want_max > 0 &&
+        (this->pol_last_4002_ms_ == 0 || now - this->pol_last_4002_ms_ >= wait)) {
+      ESP_LOGI(PTAG,
+               "Heater has not reported its bath time / max since boot - "
+               "writing %d min / %d C so it does",
+               want_min, want_max);
+      this->write_bath_settings_(want_min, want_max);
+      this->pol_last_4002_ms_ = now;
+      attempts_4002++;
     }
   }
 

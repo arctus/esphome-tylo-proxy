@@ -132,6 +132,15 @@ back if someone changes it on the panel:
 | Target temperature | at most the limit | Temperature Limit |
 | Bath time | 60 min + Session Time Limit | Session Time Limit |
 
+The check needs the heater's own bath-time / max-temperature frame (`0x4002`),
+which the heater sends only when one of them changes - so after a restart of
+the ESP alone (an OTA update) it never comes by itself. Since 1.1.1, if it
+has not arrived a minute after boot, the ESP writes the values the rules
+prescribe (bath time 60 min + limit, maximum = the limit); the heater answers
+with its own frame and the check, the display and the last-known settings
+take it from there. With a rule off, the matching value is only written if it
+is known from flash; otherwise nothing is written.
+
 *Session State* reads **Closed now** while the opening hours block a start,
 and *Opening Hours* shows `Open until 22:00`, `Closed until 07:00`, `Relaxed
 for today ...`, `Clock not set - not enforced` or `Not enforced`.

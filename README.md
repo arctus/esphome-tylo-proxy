@@ -97,13 +97,13 @@ esp32:
     type: esp-idf
 
 external_components:
-  - source: github://arctus/esphome-tylo-proxy@v1.1.0
+  - source: github://arctus/esphome-tylo-proxy@v1.1.1
     components: [sauna360, sauna_wifi]
 
 packages:
   tylo:
     url: https://github.com/arctus/esphome-tylo-proxy
-    ref: v1.1.0
+    ref: v1.1.1
     files:
       - packages/proxy.yaml
       - packages/network-fallback.yaml   # or packages/network-ap-only.yaml

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.1.1 - 2026-11-19
+
+- **The rules check the heater's bath time and maximum temperature again
+  after an update.** The heater reports `0x4002` only when one of them
+  changes, so after an ESP-only restart the Session Time Limit backstop and
+  the Temperature Limit were never checked, and Bath Time / Heater Max read
+  unknown. A minute after boot the ESP now writes the values the rules
+  prescribe (bath time 60 min + limit, maximum = the temperature limit),
+  which makes the heater report them. With a rule off, only a last-known
+  value is written, never an invented one.
+
 ## 1.1.0 - 2026-11-19
 
 - **Builds on ESPHome 2026.11 again.** 2026.11 removed `format_hex_pretty()`,
