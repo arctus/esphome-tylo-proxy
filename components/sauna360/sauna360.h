@@ -123,15 +123,24 @@ public:
   // Heater bath time chosen in the web UI. Refused while a session time limit
   // is set, because the policy then holds it at 60 min + the limit.
   bool request_heater_bath_time(int minutes);
+  // Display getters for the Temperature Level / Bath Time selects. Until the
+  // heater reports, they fall back to the last-known values kept in flash
+  // (sauna_cache.cpp). Nothing that writes to the heater uses them.
   int get_heater_target_c() const {
-    if (setpoint_temperature_received_hex_ == 0)
+    uint32_t hex = setpoint_temperature_received_hex_;
+    if (hex == 0)
+      hex = cache_setpoint_hex_.load();
+    if (hex == 0)
       return -1;
-    return (int) std::lround((setpoint_temperature_received_hex_ & 0x7FF) / 9.0f);
+    return (int) std::lround((hex & 0x7FF) / 9.0f);
   }
   int get_heater_bath_time_min() const {
-    if (bath_time_received_hex_ == 0)
+    uint32_t raw = bath_time_received_hex_;
+    if (raw == 0)
+      raw = cache_bath_raw_.load();
+    if (raw == 0)
       return -1;
-    return decode_bath_time_minutes_(bath_time_received_hex_ & 0x0FFF);
+    return decode_bath_time_minutes_(raw & 0x0FFF);
   }
   std::string get_session_state() const;
   float get_session_minutes_left() const;
@@ -338,6 +347,24 @@ protected:
   static uint32_t local_from_fields_(int y, int mo, int d, int h, int mi, int s);
   uint32_t heater_clock_local_s_() const;
   void clock_setup_();
+  // --- Last-known heater settings (sauna_cache.cpp) ---------------
+  struct SettingsCache {
+    uint32_t version;
+    uint32_t setpoint_hex; // 0x6000 bits 11-21
+    uint32_t bath_raw;     // 0x4002 bits 0-11
+    uint32_t max_hex;      // 0x4002 bits 20-31
+    uint32_t pcb_hex;      // 0x4003 bits 0-22
+  };
+  std::atomic<uint32_t> cache_setpoint_hex_{0};
+  std::atomic<uint32_t> cache_bath_raw_{0};
+  std::atomic<uint32_t> cache_max_hex_{0};
+  std::atomic<uint32_t> cache_pcb_hex_{0};
+  SettingsCache cache_saved_{};
+  ESPPreferenceObject cache_pref_;
+  void cache_setup_();
+  void cache_publish_();
+  void cache_note_(uint16_t code, uint32_t data);
+  void cache_loop_();
   ESPPreferenceObject stats_pref_;
   bool stats_on_{false};
   uint32_t stats_start_ms_{0};

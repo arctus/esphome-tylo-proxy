@@ -1,0 +1,14 @@
+# Optional: a login on the device's web UI, /sauna and the clock sync
+# included. Add it next to proxy.yaml and set web_password (and, if you like,
+# web_username) in your substitutions. Digest authentication, so the password
+# does not cross the Wi-Fi in clear. Whoever uses the sauna from a phone needs
+# the login - put it on the sign next to the access point password.
+
+substitutions:
+  web_username: sauna
+
+web_server:
+  auth:
+    type: digest
+    username: ${web_username}
+    password: ${web_password}

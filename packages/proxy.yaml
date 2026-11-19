@@ -67,7 +67,7 @@
 
 substitutions:
   # Defaults; a device file may override any of these.
-  config_version: "1.0.0"
+  config_version: "1.1.0"
   model_name: elite
   log_level: DEBUG
   heater_tx_pin: GPIO41
@@ -141,6 +141,37 @@ ota:
 # Wi-Fi is in the network packages (network-fallback.yaml, network-ap-only.yaml).
 
 # local: true embeds the UI's JavaScript - there is no internet on the AP.
+# Internet time, when the network has internet. Each sync (every 15 min)
+# compares it with the sauna's clock and, when they differ by 2 min or more,
+# writes it into the heater exactly as the /sauna phone sync does - so the
+# clock sets itself after a reboot and follows daylight saving within 15 min.
+# Without internet it never syncs and the phone sync still works. The heater
+# clock has no time zone, so local time is written: set the zone in your
+# device file (time: - id: !extend sntp_time, timezone: Europe/...) - otherwise it is
+# the zone of the machine that compiles the firmware.
+time:
+  - platform: sntp
+    id: sntp_time
+    on_time_sync:
+      then:
+        - lambda: |-
+            const ESPTime t = id(sntp_time).now();
+            if (!t.is_valid())
+              return;
+            auto *s = id(sauna360_component);
+            // Local seconds since 2000-01-01, the component's clock scale.
+            const int64_t want = (int64_t) t.timestamp + ESPTime::timezone_offset() - 946684800LL;
+            const int64_t have = (int64_t) s->now_local_s();
+            const int64_t diff = have > want ? have - want : want - have;
+            if (have != 0 && diff < 120)
+              return;
+            char buf[24];
+            snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", t.year, t.month,
+                     t.day_of_month, t.hour, t.minute, t.second);
+            ESP_LOGI("sauna", "Internet time %s, clock was %s - setting it", buf,
+                     have == 0 ? "not set" : "off");
+            s->set_clock_from_string(buf);
+
 web_server:
   port: 80
   version: 3

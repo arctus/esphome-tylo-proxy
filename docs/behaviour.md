@@ -177,19 +177,24 @@ heater has one, which it broadcasts about once a minute and keeps across
 ESP reboots - but on the heaters this was tested on it had never been set
 (it read 2001), because the basic panel has no clock.
 
+- **Internet time (1.1.0):** when the network has internet, the ESP gets the
+  time over NTP every 15 min. When the sauna's clock is unset or 2 min or
+  more off, it is written into the heater exactly like the phone sync below,
+  so the clock sets itself after a reboot and follows daylight saving within
+  15 min. It is local time, in the zone set on `sntp_time`.
 - On **/sauna**, *Sync clock from this phone* sends the phone's local time;
   the ESP writes it into the heater's clock and stamps sessions from it.
 - *Heater Clock* shows where the time comes from: **(heater)** means the
   heater took it; **(phone, until reboot)** means it did not, and the ESP is
   using the phone's time until it restarts.
-- The heater clock does not follow daylight saving: sync again in spring and
-  autumn. Sessions from before the first sync show "clock not set".
+- The heater clock does not follow daylight saving by itself: without
+  internet, sync again in spring and autumn. Sessions from before the first sync show "clock not set".
 
 ## 6. When things go wrong
 
 | Situation | What happens |
 |---|---|
-| ESP reboots or loses power | Panel shows a connection error and re-registers within ~30 s of the ESP coming back. Whether the heater keeps heating without a panel is **not tested**; at worst it runs until its own bath time (60 min + limit). Settings and statistics are kept; the running session's timer restarts. |
+| ESP reboots or loses power | Panel shows a connection error and re-registers within ~30 s of the ESP coming back. Whether the heater keeps heating without a panel is **not tested**; at worst it runs until its own bath time (60 min + limit). Settings and statistics are kept; the running session's timer restarts. The heater only reports a value when it changes, so after a restart of the ESP alone (an OTA update) the current temperature stays unknown until it moves; target, max temperature, bath time and temperature level show their last-known values from flash (1.1.0) until the heater reports. |
 | ESP dead for good | Move the panel's A/B wires onto the heater (see [wiring.md](wiring.md)) and set Bus Mode to Listen once it is back. |
 | Panel unplugged | The ESP answers the heater's polls in its place, so a running heater should carry on and the rules still apply (designed, **not tested** on the real heater). |
 | Heater's own safety (door, overheat) | Untouched - the ESP never interferes with it. Its messages appear as *Heater Message*. |

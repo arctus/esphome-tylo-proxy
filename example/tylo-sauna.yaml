@@ -15,6 +15,8 @@ substitutions:
   wifi_password: !secret wifi_password
   # Also encrypts OTA updates. Generate one: https://esphome.io/components/api/
   api_encryption_key: !secret sauna_api_key
+  # Web UI login (packages/web-auth.yaml); the user defaults to "sauna".
+  web_password: !secret sauna_web_password
 
   # Optional overrides (defaults in packages/proxy.yaml):
   # heater_tx_pin: GPIO41
@@ -44,5 +46,13 @@ external_components:
 
 packages:
   proxy: !include ../packages/proxy.yaml
+  # Optional: a login on the web UI. Leave it out for an open UI.
+  web_auth: !include ../packages/web-auth.yaml
   # Or ../packages/network-ap-only.yaml for a sauna with no Wi-Fi.
   network: !include ../packages/network-fallback.yaml
+
+# Internet time (packages/proxy.yaml) writes local time into the heater: set
+# your zone here, or it is the zone of the machine that compiles.
+time:
+  - id: !extend sntp_time
+    timezone: Europe/Madrid

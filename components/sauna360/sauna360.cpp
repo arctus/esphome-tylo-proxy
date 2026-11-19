@@ -137,6 +137,7 @@ void SAUNA360Component::setup() {
     // policy (sauna_policy.cpp) owns those settings instead.
     this->defaults_initialized_ = true;
     this->stats_setup_();
+    this->cache_setup_();
     this->clock_setup_();
     this->relax_setup_();
     return;
@@ -201,6 +202,7 @@ void SAUNA360Component::loop() {
   if (this->panel_uart_ != nullptr) {
     this->stats_loop_(); // before the policy: it reads pol_stopped_by_limit_
     this->policy_loop_();
+    this->cache_loop_();
   }
   if ((now - this->last_session_pub_ms_) >= 1000u) {
     if (this->session_active_) {
@@ -311,15 +313,24 @@ void SAUNA360Component::handle_packet_(std::vector<uint8_t> packet) {
 
   const bool from_panel = (packet_type == 0x07) || (packet_type == 0x09);
 
+  // ESPHome 2026.11 removed the hex-dump helper upstream used here;
+  // format locally so the component builds on old and new ESPHome alike.
+  char hex[3 * 16 + 1] = {0};
+  {
+    size_t pos = 0;
+    for (size_t i = 0; i < packet.size() && i < 16; i++)
+      pos += snprintf(hex + pos, sizeof(hex) - pos, i ? ".%02X" : "%02X", packet[i]);
+  }
+
   if (from_panel) {
     ESP_LOGD(TAG, "%s [ HEATER <-- PANEL ] CODE %04X DATA 0x%08X",
-             format_hex_pretty(packet).c_str(), code, (unsigned)data);
+             hex, code, (unsigned)data);
     packet.clear();
     return;
   }
 
   ESP_LOGD(TAG, "%s [ HEATER --> PANEL ] CODE %04X DATA 0x%08X",
-           format_hex_pretty(packet).c_str(), code, (unsigned)data);
+           hex, code, (unsigned)data);
 
   switch (code) {
   case 0x3400:
@@ -377,6 +388,9 @@ void SAUNA360Component::handle_packet_(std::vector<uint8_t> packet) {
     }
     break;
   }
+  // Remember the heater's settings for the next boot (sauna_cache.cpp).
+  if (this->panel_uart_ != nullptr)
+    this->cache_note_(code, data);
 }
 
 void SAUNA360Component::process_heater_status(uint32_t data) {
@@ -1021,9 +1035,8 @@ void SAUNA360Component::set_humidity_percent_number(float value) {
 
 void SAUNA360Component::create_send_data_(uint8_t type, uint16_t code,
                                           uint32_t data) {
-  ESP_LOGD(TAG, "CREATING SEND DATA TYPE:%s CODE:%s DATA:%s",
-           format_hex_pretty(type).c_str(), format_hex_pretty(code).c_str(),
-           format_hex_pretty(data).c_str());
+  ESP_LOGD(TAG, "CREATING SEND DATA TYPE:%02X CODE:%04X DATA:%08X", type, code,
+           (unsigned) data);
 
   std::vector<uint8_t> packet = {0x40, type};
   std::array<uint8_t, 2> code_array = decode_value(code);

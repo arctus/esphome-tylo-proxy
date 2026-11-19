@@ -36,9 +36,17 @@ and panel instead of onto the same bus, and builds the rest on that.
 - **Statistics:** number of sessions, total heating time, average and
   median, and the last 64 sessions with start time and how they ended.
   Kept across reboots.
+- **Clock from the internet** when the network has it: the heater's clock is
+  set and kept right (daylight saving included) without anyone pressing a
+  button. Without internet, the phone sync on `/sauna` does it.
+- **Settings survive a restart:** the heater only reports a setting when it
+  changes, so the last-known temperature level, bath time and limits are
+  kept in flash and shown after a restart until the heater reports again
+  (display only - never written back).
 - **Web UI on the device**, in sections (Heater, Session, Configuration,
   Statistics, Diagnostics), plus a `/sauna` page with the full history and a
-  button that sets the heater's clock from your phone.
+  button that sets the heater's clock from your phone. Optionally behind a
+  login (`packages/web-auth.yaml`).
 - **Network your way:** join Wi-Fi when it is there and fall back to the
   device's own access point when it is not, without the fallback's constant
   rescanning knocking phones off the page - or run as an access point only,
@@ -76,6 +84,7 @@ substitutions:
   wifi_ssid: !secret wifi_ssid
   wifi_password: !secret wifi_password
   api_encryption_key: !secret sauna_api_key  # also encrypts OTA
+  web_password: !secret sauna_web_password   # with web-auth.yaml
 
 esphome:
   name: ${device_name}
@@ -88,16 +97,22 @@ esp32:
     type: esp-idf
 
 external_components:
-  - source: github://arctus/esphome-tylo-proxy@v1.0.0
+  - source: github://arctus/esphome-tylo-proxy@v1.1.0
     components: [sauna360, sauna_wifi]
 
 packages:
   tylo:
     url: https://github.com/arctus/esphome-tylo-proxy
-    ref: v1.0.0
+    ref: v1.1.0
     files:
       - packages/proxy.yaml
       - packages/network-fallback.yaml   # or packages/network-ap-only.yaml
+      - packages/web-auth.yaml           # optional: login on the web UI
+
+# The heater clock is local time: set your zone (default: the compiling machine's).
+time:
+  - id: !extend sntp_time
+    timezone: Europe/Madrid
 ```
 
 With `network-ap-only.yaml`, leave out `wifi_ssid` and `wifi_password`.
@@ -114,8 +129,10 @@ open `http://192.168.4.1`, and check the Diagnostics section against
 ### 3. Set the clock
 
 Opening hours and session start times need the heater's clock, which the
-basic panel never sets. Open `/sauna` on your phone and press *Sync clock
-from this phone*. Repeat when daylight saving changes.
+basic panel never sets. With internet on the network the device sets it by
+itself (and keeps it right through daylight saving). Without internet, open
+`/sauna` on your phone and press *Sync clock from this phone*, and repeat
+when daylight saving changes.
 
 ## Configuration
 
