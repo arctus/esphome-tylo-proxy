@@ -159,10 +159,14 @@ std::string SAUNA360Component::get_recent_sessions_text() const {
   const uint32_t shown = st.n < 3 ? st.n : 3;
   for (uint32_t k = 0; k < shown; k++) {
     const uint32_t i = st.n - 1 - k;
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%s%s, %u min", k ? " | " : "",
+    // How it ended, so HA can tell a time-limit stop from someone switching off.
+    const char *how = st.reasons[i] == END_LIMIT     ? "time limit"
+                      : st.reasons[i] == END_BLOCKED ? "not allowed"
+                                                     : "stopped by hand";
+    char buf[80];
+    snprintf(buf, sizeof(buf), "%s%s, %u min, %s", k ? " | " : "",
              format_local(st.starts[i]).c_str(),
-             (unsigned) (st.lengths[i] / 60));
+             (unsigned) (st.lengths[i] / 60), how);
     out += buf;
   }
   return out;

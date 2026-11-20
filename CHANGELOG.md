@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.2 - 2026-11-20
+
+- **Recent Sessions says how each session ended.** Each entry now ends with
+  `time limit`, `stopped by hand` or `not allowed` (the rules switched it
+  off), e.g. `20 Nov 2026 13:50, 72 min, time limit`. The reason was already
+  recorded for the `/sauna` page; the text sensor did not carry it.
+
 ## 1.1.1 - 2026-11-19
 
 - **The rules check the heater's bath time and maximum temperature again
